@@ -1,0 +1,21 @@
+{
+  "name": "com.am.audio-manager",
+  "version": "1.0.0",
+  "displayName": "Audio Manager",
+  "description": "Singleton Audio Manager for Unity with BGM crossfade, 2D/3D SFX pooling, AudioMixer integration, and AudioConstants code generation.",
+  "unity": "6000.0",
+  "author": {
+    "name": "AM"
+  },
+  "dependencies": {
+    "com.cysharp.unitask": "2.5.10",
+    "com.unity.modules.audio": "1.0.0"
+  },
+  "keywords": [
+    "audio",
+    "bgm",
+    "sfx",
+    "pooling",
+    "audiomixer"
+  ]
+}
