@@ -26,6 +26,17 @@ A lightweight, singleton-based Audio Manager for Unity 6 with BGM crossfade, 2D/
 
 ---
 
+### How to add submodule by command line
+```bash
+git submodule add  <url> <relative_path>
+```
+Example
+```bash
+git submodule add git@github.com:draftsama/audio-manager.git Assets/audio-manager
+```
+
+---
+
 ## AudioMixer Setup
 
 The AudioManager requires a **NewAudioMixer** asset with three groups and three exposed parameters:
