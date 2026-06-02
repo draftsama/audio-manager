@@ -22,6 +22,13 @@ namespace AM.Editor
         private List<(string name, string path)> _projectClips = new List<(string, string)>();
         private string[] _clipDisplayNames = Array.Empty<string>();
 
+        private const string k_OutputPathKey = "AM.AudioConstants.OutputPath";
+        private string OutputPath
+        {
+            get => EditorPrefs.GetString(k_OutputPathKey, "Assets/audio-manager/Runtime/AudioConstants.cs");
+            set => EditorPrefs.SetString(k_OutputPathKey, value);
+        }
+
         private void OnEnable()
         {
             audioMixerProp = serializedObject.FindProperty("audioMixer");
@@ -77,8 +84,33 @@ namespace AM.Editor
             EditorGUILayout.LabelField("Audio Clips", EditorStyles.boldLabel);
             if (GUILayout.Button("↻ Scan Project", GUILayout.Width(110)))
                 RefreshProjectClips();
-            if (GUILayout.Button("Generate AudioConstants.cs", GUILayout.Width(200)))
+            EditorGUILayout.EndHorizontal();
+
+            // ── AudioConstants output path row ───────────────────────────────
+            EditorGUILayout.BeginHorizontal();
+            EditorGUILayout.LabelField("Output Path", GUILayout.Width(76));
+            string editedPath = EditorGUILayout.TextField(OutputPath);
+            if (editedPath != OutputPath) OutputPath = editedPath;
+            if (GUILayout.Button("Browse…", GUILayout.Width(64)))
+            {
+                string folder = EditorUtility.OpenFolderPanel("Select output folder", Path.GetDirectoryName(OutputPath), "");
+                if (!string.IsNullOrEmpty(folder))
+                {
+                    // Convert absolute path to project-relative
+                    string dataPath = Application.dataPath;
+                    if (folder.StartsWith(dataPath))
+                        folder = "Assets" + folder.Substring(dataPath.Length);
+                    OutputPath = folder.TrimEnd('/') + "/AudioConstants.cs";
+                }
+            }
+            if (GUILayout.Button("Generate", GUILayout.Width(68)))
                 GenerateAudioConstants();
+            bool fileExists = File.Exists(Path.GetFullPath(OutputPath));
+            using (new EditorGUI.DisabledScope(!fileExists))
+            {
+                if (GUILayout.Button("Delete", GUILayout.Width(54)))
+                    DeleteAudioConstants();
+            }
             EditorGUILayout.EndHorizontal();
 
             EditorGUILayout.Space(4);
@@ -298,18 +330,8 @@ namespace AM.Editor
                 return;
             }
 
-            // Find existing file or use default path
-            string filePath = null;
-            foreach (var guid in AssetDatabase.FindAssets("AudioConstants t:MonoScript"))
-            {
-                var p = AssetDatabase.GUIDToAssetPath(guid);
-                if (Path.GetFileNameWithoutExtension(p) == "AudioConstants")
-                {
-                    filePath = Path.GetFullPath(p);
-                    break;
-                }
-            }
-            filePath ??= Path.GetFullPath("Assets/AudioManager/AudioConstants.cs");
+            string filePath = Path.GetFullPath(OutputPath);
+            Directory.CreateDirectory(Path.GetDirectoryName(filePath));
 
             var bgm   = names.Where(n => n.StartsWith("BGM", StringComparison.OrdinalIgnoreCase)).OrderBy(n => n).ToList();
             var sfx   = names.Where(n => n.StartsWith("SFX", StringComparison.OrdinalIgnoreCase)).OrderBy(n => n).ToList();
@@ -342,6 +364,29 @@ namespace AM.Editor
             File.WriteAllText(filePath, sb.ToString(), Encoding.UTF8);
             AssetDatabase.Refresh();
             Debug.Log($"[AudioManager] AudioConstants.cs generated → {filePath}");
+        }
+
+        private void DeleteAudioConstants()
+        {
+            string filePath = Path.GetFullPath(OutputPath);
+            if (!File.Exists(filePath))
+            {
+                EditorUtility.DisplayDialog("Delete AudioConstants", "File not found:\n" + OutputPath, "OK");
+                return;
+            }
+
+            bool confirm = EditorUtility.DisplayDialog(
+                "Delete AudioConstants.cs",
+                "Delete file?\n" + OutputPath,
+                "Delete", "Cancel");
+
+            if (!confirm) return;
+
+            File.Delete(filePath);
+            string metaPath = filePath + ".meta";
+            if (File.Exists(metaPath)) File.Delete(metaPath);
+            AssetDatabase.Refresh();
+            Debug.Log($"[AudioManager] AudioConstants.cs deleted → {filePath}");
         }
 
         private static string ToConstantName(string s)
