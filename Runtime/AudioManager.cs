@@ -1,6 +1,7 @@
 using UnityEngine;
 using UnityEngine.Audio;
 using System.Collections.Generic;
+using Cysharp.Threading.Tasks;
 using Sirenix.OdinInspector;
 
 namespace AM
@@ -26,7 +27,19 @@ namespace AM
         private BGMController _bgmController;
         private SFXController _sfxController;
 
+        // clips ready to play: internal + preloaded external + lazily-loaded external once resolved.
+        // shared by reference with SFXController, so lazily-added clips become playable there too.
         private Dictionary<string, AudioClip> audioDictionary;
+
+        // every declared entry by name, used to resolve lazy/external clips on demand.
+        private Dictionary<string, AudioClipData> _entries;
+
+        // System Task (not UniTask) so multiple callers can await readiness concurrently.
+        private readonly System.Threading.Tasks.TaskCompletionSource<bool> _readySource =
+            new System.Threading.Tasks.TaskCompletionSource<bool>();
+
+        // true once external preloading has finished (success or per-clip failure).
+        public bool IsReady { get; private set; }
 
         public AudioInstance CurrentBGM => _bgmController?.CurrentBGM;
 
@@ -50,6 +63,8 @@ namespace AM
                 _poolManager.Initialize(audioMixer, initialBGMPoolSize, initialSFXPoolSize);
                 _bgmController.Initialize(audioMixer, _poolManager, bgmFadeDuration);
                 _sfxController.Initialize(audioMixer, _poolManager, audioDictionary);
+
+                PreloadExternalAsync().Forget();
             }
             else
             {
@@ -78,13 +93,97 @@ namespace AM
         private void InitializeAudioDictionaries()
         {
             audioDictionary = new Dictionary<string, AudioClip>();
+            _entries = new Dictionary<string, AudioClipData>();
+
             foreach (var clipData in audioClips)
             {
-                if (clipData.clip != null && !string.IsNullOrEmpty(clipData.name) && !audioDictionary.ContainsKey(clipData.name))
-                {
+                if (string.IsNullOrEmpty(clipData.name) || _entries.ContainsKey(clipData.name))
+                    continue;
+
+                _entries.Add(clipData.name, clipData);
+
+                // internal clips are ready immediately; external clips are loaded async
+                if (clipData.source == ClipSource.Internal && clipData.clip != null)
                     audioDictionary.Add(clipData.name, clipData.clip);
+            }
+        }
+
+        // load every external+preload entry into audioDictionary, then flag ready.
+        private async UniTaskVoid PreloadExternalAsync()
+        {
+            try
+            {
+                foreach (var kv in _entries)
+                {
+                    var data = kv.Value;
+                    if (data.source != ClipSource.External || !data.preload)
+                        continue;
+
+                    if (string.IsNullOrEmpty(data.externalPath))
+                    {
+                        Debug.LogWarning($"External audio '{data.name}' has an empty path; skipped.");
+                        continue;
+                    }
+
+                    try
+                    {
+                        var fullPath = AudioResourcePath.GetAudioFolderPath(data.externalPath);
+                        var clip = await AudioClipLoader.GetAudioClipAsync(fullPath);
+                        if (clip != null)
+                            audioDictionary[data.name] = clip;
+                    }
+                    catch (System.Exception e)
+                    {
+                        Debug.LogError($"Failed preloading external audio '{data.name}': {e.Message}");
+                    }
                 }
             }
+            finally
+            {
+                IsReady = true;
+                _readySource.TrySetResult(true);
+            }
+        }
+
+        // returns a cached clip, or loads an external clip on demand (lazy).
+        private async UniTask<AudioClip> ResolveClipAsync(string clipName)
+        {
+            if (audioDictionary.TryGetValue(clipName, out var cached))
+                return cached;
+
+            if (_entries != null && _entries.TryGetValue(clipName, out var data) && data.source == ClipSource.External)
+            {
+                if (string.IsNullOrEmpty(data.externalPath))
+                {
+                    Debug.LogWarning($"External audio '{clipName}' has an empty path.");
+                    return null;
+                }
+
+                var fullPath = AudioResourcePath.GetAudioFolderPath(data.externalPath);
+                var clip = await AudioClipLoader.GetAudioClipAsync(fullPath);
+                if (clip != null)
+                    audioDictionary[clipName] = clip;
+                return clip;
+            }
+
+            Debug.LogWarning($"Audio clip '{clipName}' not found (no internal clip, no external entry).");
+            return null;
+        }
+
+        // true when the name is a declared external clip not yet loaded — hints to use the async API.
+        private bool IsUnloadedExternal(string clipName) =>
+            !audioDictionary.ContainsKey(clipName)
+            && _entries != null
+            && _entries.TryGetValue(clipName, out var d)
+            && d.source == ClipSource.External;
+
+        // await until external preloading has completed. Safe to call from multiple places.
+        public static UniTask WaitUntilReadyAsync()
+        {
+            var mgr = GetInstance();
+            if (mgr == null) return UniTask.CompletedTask;
+            // cast to non-generic Task so AsUniTask() resolves to UniTask (not UniTask<bool>)
+            return ((System.Threading.Tasks.Task)mgr._readySource.Task).AsUniTask();
         }
 
         public static AudioInstance PlayBGM(string clipName, float volume = 1f, bool loop = true)
@@ -100,11 +199,30 @@ namespace AM
             {
                 return mgr._bgmController.PlayBGM(clipName, clip, volume, loop);
             }
+
+            if (mgr.IsUnloadedExternal(clipName))
+                Debug.LogWarning($"BGM '{clipName}' is an external clip not yet loaded — use PlayBGMAsync().");
             else
+                Debug.LogWarning($"BGM clip '{clipName}' not found!");
+            return null;
+        }
+
+        public static async UniTask<AudioInstance> PlayBGMAsync(string clipName, float volume = 1f, bool loop = true)
+        {
+            var mgr = GetInstance();
+            if (mgr == null)
+            {
+                Debug.LogWarning("AudioManager instance not found!");
+                return null;
+            }
+
+            var clip = await mgr.ResolveClipAsync(clipName);
+            if (clip == null)
             {
                 Debug.LogWarning($"BGM clip '{clipName}' not found!");
                 return null;
             }
+            return mgr._bgmController.PlayBGM(clipName, clip, volume, loop);
         }
 
         public static void StopBGM()
@@ -133,6 +251,11 @@ namespace AM
                 Debug.LogWarning("AudioManager instance not found!");
                 return null;
             }
+            if (mgr.IsUnloadedExternal(clipName))
+            {
+                Debug.LogWarning($"SFX '{clipName}' is an external clip not yet loaded — use PlaySFXAsync().");
+                return null;
+            }
             return mgr._sfxController.PlaySFX(clipName, volume, loop);
         }
 
@@ -145,6 +268,38 @@ namespace AM
                 Debug.LogWarning("AudioManager instance not found!");
                 return null;
             }
+            if (mgr.IsUnloadedExternal(clipName))
+            {
+                Debug.LogWarning($"SFX '{clipName}' is an external clip not yet loaded — use PlaySFXAsync().");
+                return null;
+            }
+            return mgr._sfxController.PlaySFX(clipName, position, volume, loop, minDistance, maxDistance, followTransform);
+        }
+
+        public static async UniTask<AudioInstance> PlaySFXAsync(string clipName, float volume = 1f, bool loop = false)
+        {
+            var mgr = GetInstance();
+            if (mgr == null)
+            {
+                Debug.LogWarning("AudioManager instance not found!");
+                return null;
+            }
+            var clip = await mgr.ResolveClipAsync(clipName);
+            if (clip == null) return null;
+            return mgr._sfxController.PlaySFX(clipName, volume, loop);
+        }
+
+        public static async UniTask<AudioInstance> PlaySFXAsync(string clipName, Vector3 position, float volume = 1f,
+            bool loop = false, float minDistance = 1f, float maxDistance = 500f, Transform followTransform = null)
+        {
+            var mgr = GetInstance();
+            if (mgr == null)
+            {
+                Debug.LogWarning("AudioManager instance not found!");
+                return null;
+            }
+            var clip = await mgr.ResolveClipAsync(clipName);
+            if (clip == null) return null;
             return mgr._sfxController.PlaySFX(clipName, position, volume, loop, minDistance, maxDistance, followTransform);
         }
 
