@@ -145,6 +145,22 @@ namespace AM
             }
         }
 
+        // load one external entry and publish it into the live dictionary.
+        private async UniTaskVoid PreloadOneAsync(AudioClipData data)
+        {
+            try
+            {
+                var fullPath = AudioResourcePath.GetAudioFolderPath(data.externalPath);
+                var clip = await AudioClipLoader.GetAudioClipAsync(fullPath);
+                if (clip != null)
+                    audioDictionary[data.name] = clip;
+            }
+            catch (System.Exception e)
+            {
+                Debug.LogError($"Failed preloading external audio '{data.name}': {e.Message}");
+            }
+        }
+
         // returns a cached clip, or loads an external clip on demand (lazy).
         private async UniTask<AudioClip> ResolveClipAsync(string clipName)
         {
@@ -184,6 +200,56 @@ namespace AM
             if (mgr == null) return UniTask.CompletedTask;
             // cast to non-generic Task so AsUniTask() resolves to UniTask (not UniTask<bool>)
             return ((System.Threading.Tasks.Task)mgr._readySource.Task).AsUniTask();
+        }
+
+        // Register an external audio file at runtime so it becomes playable by name
+        // through the normal PlaySFX/PlayBGM lookup. Intended for components (e.g.
+        // AudioButtonView) that carry their own clip independent of the inspector list.
+        // Safe to call before the manager exists — GetInstance() bootstraps it from
+        // Resources/AudioManager if there is no instance in the scene.
+        public static void RegisterExternalClip(string clipName, string externalPath, bool preload = false)
+        {
+            if (string.IsNullOrEmpty(clipName))
+            {
+                Debug.LogWarning("RegisterExternalClip: clip name is empty; skipped.");
+                return;
+            }
+
+            var mgr = GetInstance();
+            if (mgr == null)
+            {
+                Debug.LogWarning($"RegisterExternalClip('{clipName}'): AudioManager instance not found (no scene object and no Resources/AudioManager prefab).");
+                return;
+            }
+
+            if (mgr._entries == null)
+            {
+                Debug.LogWarning($"RegisterExternalClip('{clipName}'): AudioManager not initialized yet.");
+                return;
+            }
+
+            // already declared (inspector list or a previous registration) — don't clobber it
+            if (mgr._entries.ContainsKey(clipName))
+                return;
+
+            if (string.IsNullOrEmpty(externalPath))
+            {
+                Debug.LogWarning($"RegisterExternalClip('{clipName}'): external path is empty; skipped.");
+                return;
+            }
+
+            var data = new AudioClipData
+            {
+                name = clipName,
+                source = ClipSource.External,
+                externalPath = externalPath,
+                preload = preload
+            };
+            mgr._entries[clipName] = data;
+
+            // preload publishes into audioDictionary now; otherwise it lazy-loads on first PlaySFXAsync/PlayBGMAsync.
+            if (preload)
+                mgr.PreloadOneAsync(data).Forget();
         }
 
         public static AudioInstance PlayBGM(string clipName, float volume = 1f, bool loop = true)
