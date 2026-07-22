@@ -8,13 +8,31 @@ using System.IO;
 
 namespace AM
 {
+    public enum ClipSource
+    {
+        Internal,
+        External
+    }
+
     [System.Serializable]
     [InlineProperty(LabelWidth = 60)]
     public class AudioClipData
     {
         [ValueDropdown("GetAudioClipNames"), OnValueChanged("OnNameChanged")]
         public string name;
+
+        // Internal = Unity AudioClip asset; External = file loaded from Resources at runtime.
+        public ClipSource source = ClipSource.Internal;
+
+        // Internal source
         public AudioClip clip;
+
+        // External source — path relative to the Resources folder (AudioResourcePath.RootFolderName)
+        public string externalPath;
+
+        // External source — true: preload at init (keeps sync Play working);
+        // false: lazy-load on first PlaySFXAsync/PlayBGMAsync call.
+        public bool preload = true;
 
 #if UNITY_EDITOR
         private static IEnumerable<string> GetAudioClipNames()

@@ -22,6 +22,9 @@ namespace AM.Editor
         private List<(string name, string path)> _projectClips = new List<(string, string)>();
         private string[] _clipDisplayNames = Array.Empty<string>();
 
+        // external audio files found under the on-disk Resources folder (relative paths)
+        private string[] _audioResourcePaths = Array.Empty<string>();
+
         private const string k_OutputPathKey = "AM.AudioConstants.OutputPath";
         private string OutputPath
         {
@@ -50,6 +53,8 @@ namespace AM.Editor
             }
             _projectClips = _projectClips.OrderBy(c => c.name).ToList();
             _clipDisplayNames = _projectClips.Select(c => c.name).ToArray();
+
+            _audioResourcePaths = AudioResourcePath.GetAudioResourcePaths();
         }
 
         public override void OnInspectorGUI()
@@ -119,11 +124,25 @@ namespace AM.Editor
             int removeIndex = -1;
             for (int i = 0; i < audioClipsProp.arraySize; i++)
             {
-                SerializedProperty element  = audioClipsProp.GetArrayElementAtIndex(i);
-                SerializedProperty nameProp = element.FindPropertyRelative("name");
-                SerializedProperty clipProp = element.FindPropertyRelative("clip");
+                SerializedProperty element      = audioClipsProp.GetArrayElementAtIndex(i);
+                SerializedProperty nameProp     = element.FindPropertyRelative("name");
+                SerializedProperty clipProp     = element.FindPropertyRelative("clip");
+                SerializedProperty sourceProp   = element.FindPropertyRelative("source");
+                SerializedProperty externalProp = element.FindPropertyRelative("externalPath");
+                SerializedProperty preloadProp  = element.FindPropertyRelative("preload");
 
                 EditorGUILayout.BeginHorizontal();
+
+                // Source toggle (Internal / External)
+                EditorGUILayout.PropertyField(sourceProp, GUIContent.none, GUILayout.Width(72));
+                bool isExternal = (ClipSource)sourceProp.enumValueIndex == ClipSource.External;
+
+                if (isExternal)
+                {
+                    DrawExternalRow(i, nameProp, externalProp, preloadProp);
+                }
+                else
+                {
 
                 // Dropdown — project audio clip names
                 int currentIdx = Array.IndexOf(_clipDisplayNames, nameProp.stringValue);
@@ -143,6 +162,7 @@ namespace AM.Editor
                     if (EditorGUI.DropdownButton(btnRect, new GUIContent(btnLabel), FocusType.Keyboard))
                     {
                         int capturedI = i;
+                        // internal clip picker
                         SearchablePopup.Show(btnRect, _clipDisplayNames, Mathf.Max(currentIdx, 0), newIdx =>
                         {
                             var elem = audioClipsProp.GetArrayElementAtIndex(capturedI);
@@ -168,6 +188,7 @@ namespace AM.Editor
                     if (GUILayout.Button("▶", GUILayout.Width(26))) PlayClip(clip);
                     if (GUILayout.Button("■", GUILayout.Width(26))) StopAllClips();
                 }
+                } // end internal branch
 
                 // Remove
                 if (GUILayout.Button("✕", GUILayout.Width(22)))
@@ -185,8 +206,11 @@ namespace AM.Editor
             {
                 audioClipsProp.InsertArrayElementAtIndex(audioClipsProp.arraySize);
                 var el = audioClipsProp.GetArrayElementAtIndex(audioClipsProp.arraySize - 1);
-                el.FindPropertyRelative("name").stringValue         = string.Empty;
+                el.FindPropertyRelative("name").stringValue          = string.Empty;
                 el.FindPropertyRelative("clip").objectReferenceValue = null;
+                el.FindPropertyRelative("source").enumValueIndex     = (int)ClipSource.Internal;
+                el.FindPropertyRelative("externalPath").stringValue  = string.Empty;
+                el.FindPropertyRelative("preload").boolValue         = true;
             }
 
             if (audioClipsProp.arraySize == 0)
@@ -196,6 +220,58 @@ namespace AM.Editor
         }
 
       
+
+        // ── Mixer structure check ──────────────────────────────────────────────
+        // ── External clip row (source = External) ───────────────────────────────
+        private void DrawExternalRow(int index, SerializedProperty nameProp,
+            SerializedProperty externalProp, SerializedProperty preloadProp)
+        {
+            // Name — the key used by PlaySFX/PlayBGM at runtime
+            nameProp.stringValue = EditorGUILayout.TextField(nameProp.stringValue, GUILayout.Width(120));
+
+            // File picker — lists audio files under the on-disk Resources folder
+            string current  = externalProp.stringValue;
+            string btnLabel = string.IsNullOrEmpty(current) ? "— select file —" : current;
+            var btnRect = GUILayoutUtility.GetRect(new GUIContent(btnLabel), EditorStyles.popup);
+            if (EditorGUI.DropdownButton(btnRect, new GUIContent(btnLabel), FocusType.Keyboard))
+            {
+                if (_audioResourcePaths.Length == 0)
+                {
+                    Debug.LogWarning($"[AudioManager] No audio files found under {AudioResourcePath.GetAudioFolderPath()}");
+                }
+                else
+                {
+                    int cur = Array.IndexOf(_audioResourcePaths, current);
+                    int capturedI = index;
+                    SearchablePopup.Show(btnRect, _audioResourcePaths, Mathf.Max(cur, 0), newIdx =>
+                    {
+                        var elem   = audioClipsProp.GetArrayElementAtIndex(capturedI);
+                        var picked = _audioResourcePaths[newIdx];
+                        elem.FindPropertyRelative("externalPath").stringValue = picked;
+                        // default the runtime name to the file name when not set yet
+                        var nameRel = elem.FindPropertyRelative("name");
+                        if (string.IsNullOrEmpty(nameRel.stringValue))
+                            nameRel.stringValue = Path.GetFileNameWithoutExtension(picked);
+                        serializedObject.ApplyModifiedProperties();
+                    });
+                }
+            }
+
+            // Preload vs lazy
+            preloadProp.boolValue = EditorGUILayout.ToggleLeft(
+                new GUIContent("Preload", "On: load at init (sync Play works). Off: lazy-load on first PlaySFXAsync/PlayBGMAsync."),
+                preloadProp.boolValue, GUILayout.Width(72));
+
+            // Reveal in file browser
+            using (new EditorGUI.DisabledScope(string.IsNullOrEmpty(current)))
+            {
+                if (GUILayout.Button("Open", GUILayout.Width(48)))
+                {
+                    var full = AudioResourcePath.GetAudioFolderPath(current);
+                    EditorUtility.RevealInFinder(File.Exists(full) ? full : AudioResourcePath.GetAudioFolderPath());
+                }
+            }
+        }
 
         // ── Mixer structure check ──────────────────────────────────────────────
         private void DrawMixerStructureCheck()
