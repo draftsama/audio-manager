@@ -27,7 +27,7 @@ namespace AM
         // Internal source
         public AudioClip clip;
 
-        // External source — path relative to the Resources folder (AudioResourcePath.RootFolderName)
+        // External source — Resource Path, relative to ExternalResourcePath.Resolve()
         public string externalPath;
 
         // External source — true: preload at init (keeps sync Play working);
