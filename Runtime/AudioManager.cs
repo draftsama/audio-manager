@@ -2,6 +2,7 @@ using UnityEngine;
 using UnityEngine.Audio;
 using System.Collections.Generic;
 using Cysharp.Threading.Tasks;
+using Draft.ExternalResources;
 using Sirenix.OdinInspector;
 
 namespace AM
@@ -113,9 +114,9 @@ namespace AM
         {
             try
             {
-                foreach (var kv in _entries)
+                // snapshot: RegisterExternalClip may add entries while this loop awaits
+                foreach (var data in new List<AudioClipData>(_entries.Values))
                 {
-                    var data = kv.Value;
                     if (data.source != ClipSource.External || !data.preload)
                         continue;
 
@@ -127,10 +128,13 @@ namespace AM
 
                     try
                     {
-                        var fullPath = AudioResourcePath.GetAudioFolderPath(data.externalPath);
-                        var clip = await AudioClipLoader.GetAudioClipAsync(fullPath);
+                        var clip = await ExternalAudioLoader.GetAudioClipAsync(data.externalPath, this.GetCancellationTokenOnDestroy());
                         if (clip != null)
                             audioDictionary[data.name] = clip;
+                    }
+                    catch (System.OperationCanceledException)
+                    {
+                        return;
                     }
                     catch (System.Exception e)
                     {
@@ -150,10 +154,12 @@ namespace AM
         {
             try
             {
-                var fullPath = AudioResourcePath.GetAudioFolderPath(data.externalPath);
-                var clip = await AudioClipLoader.GetAudioClipAsync(fullPath);
+                var clip = await ExternalAudioLoader.GetAudioClipAsync(data.externalPath, this.GetCancellationTokenOnDestroy());
                 if (clip != null)
                     audioDictionary[data.name] = clip;
+            }
+            catch (System.OperationCanceledException)
+            {
             }
             catch (System.Exception e)
             {
@@ -175,8 +181,7 @@ namespace AM
                     return null;
                 }
 
-                var fullPath = AudioResourcePath.GetAudioFolderPath(data.externalPath);
-                var clip = await AudioClipLoader.GetAudioClipAsync(fullPath);
+                var clip = await ExternalAudioLoader.GetAudioClipAsync(data.externalPath, this.GetCancellationTokenOnDestroy());
                 if (clip != null)
                     audioDictionary[clipName] = clip;
                 return clip;

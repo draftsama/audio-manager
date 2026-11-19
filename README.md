@@ -13,6 +13,7 @@ A lightweight, singleton-based Audio Manager for Unity 6 with BGM crossfade, 2D/
 - **AudioMixer Integration** — per-group volume control via exposed parameters
 - **AudioConstants Generator** — one-click editor button generates a static constants class from all registered clips
 - **Odin Inspector** — searchable dropdown in `AudioClipData` for quick clip assignment
+- **External clips** — `.wav` / `.ogg` / `.mp3` files under `<app folder>/Resources`, loaded through `ExternalAudioLoader` from external-resources-unity, so sounds can be swapped without a rebuild
 
 ---
 
@@ -23,6 +24,7 @@ A lightweight, singleton-based Audio Manager for Unity 6 with BGM crossfade, 2D/
 | Unity | 6000.0+ |
 | [UniTask](https://github.com/Cysharp/UniTask) | 2.5.10+ |
 | [Odin Inspector](https://odininspector.com) | 3.x |
+| [external-resources-unity](https://github.com/draftsama/external-resources-unity) | main |
 
 ---
 

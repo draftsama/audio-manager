@@ -7,6 +7,7 @@ using System;
 using System.IO;
 using System.Text;
 using System.Reflection;
+using Draft.ExternalResources;
 
 namespace AM.Editor
 {
@@ -54,7 +55,7 @@ namespace AM.Editor
             _projectClips = _projectClips.OrderBy(c => c.name).ToList();
             _clipDisplayNames = _projectClips.Select(c => c.name).ToArray();
 
-            _audioResourcePaths = AudioResourcePath.GetAudioResourcePaths();
+            _audioResourcePaths = ExternalResourcePath.FindResourcePaths(ExternalResourcePath.AudioExtensions).ToArray();
         }
 
         public override void OnInspectorGUI()
@@ -237,7 +238,7 @@ namespace AM.Editor
             {
                 if (_audioResourcePaths.Length == 0)
                 {
-                    Debug.LogWarning($"[AudioManager] No audio files found under {AudioResourcePath.GetAudioFolderPath()}");
+                    Debug.LogWarning($"[AudioManager] No audio files found under {ExternalResourcePath.Resolve()}");
                 }
                 else
                 {
@@ -267,8 +268,8 @@ namespace AM.Editor
             {
                 if (GUILayout.Button("Open", GUILayout.Width(48)))
                 {
-                    var full = AudioResourcePath.GetAudioFolderPath(current);
-                    EditorUtility.RevealInFinder(File.Exists(full) ? full : AudioResourcePath.GetAudioFolderPath());
+                    var full = ExternalResourcePath.Resolve(current);
+                    EditorUtility.RevealInFinder(File.Exists(full) ? full : ExternalResourcePath.Resolve());
                 }
             }
         }
