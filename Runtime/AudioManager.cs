@@ -314,6 +314,14 @@ namespace AM
             mgr?._bgmController.SetBGMVolume(volume);
         }
 
+        // Fades the BGM mixer volume (linear 0..1) to volume over fadeDuration seconds. A later
+        // SetBGMVolume call cancels a fade in progress; the task then completes without throwing.
+        public static UniTask SetBGMVolume(float volume, float fadeDuration)
+        {
+            var mgr = GetInstance();
+            return mgr == null ? UniTask.CompletedTask : mgr._bgmController.SetBGMVolumeAsync(volume, fadeDuration);
+        }
+
         public static AudioInstance PlaySFX(string clipName, float volume = 1f, bool loop = false)
         {
             var mgr = GetInstance();

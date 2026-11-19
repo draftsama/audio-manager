@@ -1,4 +1,6 @@
 using System.Collections;
+using System.Threading;
+using Cysharp.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Audio;
 
@@ -14,6 +16,7 @@ namespace AM
         public AudioInstance CurrentBGM => _currentBGM;
         private AudioInstance _nextBGM;
         private Coroutine _fadeCoroutine;
+        private CancellationTokenSource _volumeFadeCts;
 
         public void Initialize(AudioMixer mixer, AudioPoolManager poolManager, float fadeDuration)
         {
@@ -72,6 +75,59 @@ namespace AM
         }
 
         public void SetBGMVolume(float volume)
+        {
+            CancelVolumeFade();
+            ApplyBGMVolume(volume);
+        }
+
+        public async UniTask SetBGMVolumeAsync(float volume, float fadeDuration)
+        {
+            CancelVolumeFade();
+            if (_audioMixer == null) return;
+
+            float target = Mathf.Clamp01(volume);
+            if (fadeDuration <= 0f)
+            {
+                ApplyBGMVolume(target);
+                return;
+            }
+
+            var cts = CancellationTokenSource.CreateLinkedTokenSource(this.GetCancellationTokenOnDestroy());
+            _volumeFadeCts = cts;
+            try
+            {
+                float from = GetBGMVolume();
+                float elapsed = 0f;
+                while (elapsed < fadeDuration)
+                {
+                    if (await UniTask.Yield(PlayerLoopTiming.Update, cts.Token).SuppressCancellationThrow())
+                        return;
+
+                    elapsed += Time.deltaTime;
+                    ApplyBGMVolume(Mathf.Lerp(from, target, elapsed / fadeDuration));
+                }
+                ApplyBGMVolume(target);
+            }
+            finally
+            {
+                if (_volumeFadeCts == cts) _volumeFadeCts = null;
+                cts.Dispose();
+            }
+        }
+
+        private void CancelVolumeFade()
+        {
+            _volumeFadeCts?.Cancel();
+            _volumeFadeCts = null;
+        }
+
+        private float GetBGMVolume()
+        {
+            if (_audioMixer == null || !_audioMixer.GetFloat("BGMVolume", out float db)) return 1f;
+            return db <= -80f ? 0f : Mathf.Pow(10f, db / 20f);
+        }
+
+        private void ApplyBGMVolume(float volume)
         {
             if (_audioMixer == null) return;
             float dbVolume = LinearToDecibel(volume);
